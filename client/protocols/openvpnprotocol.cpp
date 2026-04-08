@@ -41,11 +41,17 @@ QString OpenVpnProtocol::defaultConfigPath()
 void OpenVpnProtocol::stop()
 {
     qDebug() << "OpenVpnProtocol::stop()";
+
+    // Capture the previous state BEFORE setConnectionState() mutates it.
+    // VpnProtocol::setConnectionState() synchronously assigns m_connectionState,
+    // so checking m_connectionState after the assignment to Disconnecting will
+    // never match Connected/Connecting/Reconnecting/Preparing — the entire
+    // shutdown block was dead code in the original implementation.
+    const Vpn::ConnectionState prevState = m_connectionState;
     setConnectionState(Vpn::ConnectionState::Disconnecting);
 
-    if ((m_connectionState == Vpn::ConnectionState::Preparing) || (m_connectionState == Vpn::ConnectionState::Connecting)
-        || (m_connectionState == Vpn::ConnectionState::Connected)
-        || (m_connectionState == Vpn::ConnectionState::Reconnecting)) {
+    if (prevState == Vpn::ConnectionState::Preparing || prevState == Vpn::ConnectionState::Connecting
+        || prevState == Vpn::ConnectionState::Connected || prevState == Vpn::ConnectionState::Reconnecting) {
         // Try graceful shutdown via management interface first.
         // sendTermSignal() returns true as soon as bytes are written to the
         // management socket, NOT when openvpn actually processes SIGTERM, so
