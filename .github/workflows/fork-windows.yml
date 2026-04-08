@@ -1,0 +1,101 @@
+name: 'Build Windows (fork)'
+
+# Standalone workflow that only builds the Windows desktop client.
+# Used in the alexhmt fork to validate openvpnprotocol.cpp stop() fix
+# without triggering the upstream Linux/Android/iOS/macOS jobs that
+# require self-hosted runners and signing secrets the fork does not have.
+
+on:
+  push:
+    branches:
+      - 'fix/**'
+      - 'feat/**'
+  workflow_dispatch:
+
+env:
+  QT_MIRROR: https://mirrors.ocf.berkeley.edu/qt/
+
+jobs:
+  Build-Windows:
+    runs-on: windows-latest
+
+    env:
+      QT_VERSION: 6.10.1
+      QIF_VERSION: 4.7
+      BUILD_ARCH: 64
+
+    steps:
+    - name: 'Get sources'
+      uses: actions/checkout@v4
+      with:
+        submodules: 'true'
+        fetch-depth: 10
+
+    - name: 'Get version from CMakeLists.txt'
+      id: get_version
+      shell: bash
+      run: |
+        VERSION=$(grep 'set(AMNEZIAVPN_VERSION' CMakeLists.txt | sed -E 's/.*AMNEZIAVPN_VERSION ([0-9]+.[0-9]+.[0-9]+.[0-9]+)\)/\1/')
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Version: $VERSION"
+
+    - name: 'Install Qt'
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: ${{ env.QT_VERSION }}
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2022_64'
+        modules: 'qtremoteobjects qt5compat qtshadertools'
+        dir: ${{ runner.temp }}
+        setup-python: 'true'
+        tools: 'tools_ifw'
+        set-env: 'true'
+        aqtversion: '==3.3.0'
+        py7zrversion: '==0.22.*'
+        extra: '--base ${{ env.QT_MIRROR }}'
+
+    - name: 'Setup mvsc'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: 'x64'
+
+    - name: 'Setup .NET SDK'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: 'Install WiX Toolset'
+      shell: powershell
+      run: |
+        dotnet tool install --global wix --version 4.0.6
+        wix extension add -g WixToolset.UI.wixext/4.0.6
+        wix extension add -g WixToolset.Util.wixext/4.0.6
+        wix extension list -g
+        $wixBinDir = Join-Path $env:USERPROFILE ".dotnet\tools"
+        echo "WIX_BIN_DIR=$wixBinDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: 'Build project'
+      shell: cmd
+      run: |
+        set BUILD_ARCH=${{ env.BUILD_ARCH }}
+        set QT_BIN_DIR="${{ runner.temp }}\\Qt\\${{ env.QT_VERSION }}\\msvc2022_64\\bin"
+        set QIF_BIN_DIR="${{ runner.temp }}\\Qt\\Tools\\QtInstallerFramework\\${{ env.QIF_VERSION }}\\bin"
+        set WIX_BIN_DIR=%USERPROFILE%\.dotnet\tools
+        call deploy\\build_windows.bat
+
+    - name: 'Upload unpacked artifact'
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: AmneziaVPN_Windows_unpacked
+        path: deploy\\build_${{ env.BUILD_ARCH }}\\client\\Release
+        retention-days: 14
+
+    - name: 'Upload installer artifact'
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: AmneziaVPN_${{ env.VERSION }}_x64_installer
+        path: AmneziaVPN_x${{ env.BUILD_ARCH }}.exe
+        retention-days: 14
